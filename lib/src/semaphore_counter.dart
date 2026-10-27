@@ -23,12 +23,15 @@ class SemaphoreCountDeletion {
 }
 
 class SemaphoreCount<CU extends SemaphoreCountUpdate, CD extends SemaphoreCountDeletion> {
-  static final Map<String, int?> __counts = {};
+  // The counter registry already shares counts for an active name. Keep the
+  // storage on this object so a retired counter cannot mutate a replacement,
+  // and so retired generations can be garbage collected with their owners.
+  final Map<String, int?> __counts = {};
 
   bool verbose;
 
   @protected
-  Map<String, int?> get counts => SemaphoreCount.__counts;
+  Map<String, int?> get counts => __counts;
 
   Map<String, int?> get all => Map.unmodifiable(counts);
 

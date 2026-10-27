@@ -5,47 +5,49 @@ import 'dart:ffi'
         AbiSpecificIntegerMapping,
         Char,
         Int,
+        Int32,
         Native,
         Pointer,
         Uint16,
         Uint32,
         Uint64,
-        Uint8,
         UnsignedInt,
-        UnsignedLong,
-        UnsignedShort,
         VarArgs;
 import 'dart:io' show Platform;
 
 // in C the sizeof(sem_t) = 4 bytes on MacOS Arm64 and x86_64 and on Linux it seems to be the same case!
 typedef sem_t = Int;
 
-/// Data Type: [mode_t] is typically defined as an unsigned integer type.
-/// The exact size can vary between systems, but it is commonly 16 bits wide
-/// on many UNIX and UNIX-like systems. Usage: It specifies file permissions
-/// and type when creating new files or directories
-/// (for example, with the open or mkdir system calls) and also
-/// when changing permissions (with chmod or fchmod).
-/// Size of [mode_t]: 2 bytes on MacOS Arm64 and x86_64
-
-/// [mode_t] is often a 16-bit unsigned integer (uint16_t), but this can vary.
-/// Dart FFI provides several integer types, such as [Uint8], [Uint16], [Uint32], and [Uint64],
-/// to match the native types used by the C language.
-/// Given the commonality of [mode_t] being a 16-bit value, you would likely use [Uint16] in Dart FFI,
-/// but you should verify this against the documentation or header
-/// files of the system you're working on. If you're interfacing with functions
-/// that require [mode_t], you would declare them in Dart using [Uint16] for those parameters.
-
-/// On [x86_64], [mode_t] is a [UnsignedShort] and on [arm64], [mode_t] is an [UnsignedLong]
-/// mode_t
+/// Storage type: Darwin's __darwin_mode_t is uint16_t; Linux's __mode_t
+/// is unsigned int. This is not the promoted variadic argument type.
+/// See apple-oss-distributions/xnu bsd/sys/_types.h and glibc
+/// sysdeps/unix/sysv/linux/bits/typesizes.h (__MODE_T_TYPE).
 @AbiSpecificIntegerMapping({
-  Abi.macosArm64: Uint64(),
+  Abi.macosArm64: Uint16(),
   Abi.macosX64: Uint16(),
-  Abi.linuxX64: Uint16(),
-  Abi.linuxIA32: Uint16(),
+  Abi.linuxArm: Uint32(),
+  Abi.linuxArm64: Uint32(),
+  Abi.linuxX64: Uint32(),
+  Abi.linuxIA32: Uint32(),
 })
 final class mode_t extends AbiSpecificInteger {
   const mode_t();
+}
+
+/// C default argument promotions convert Darwin's unsigned short to signed
+/// int (all values fit); Linux's unsigned int is unchanged. Dart VarArgs
+/// must describe these actual argument types, not the unpromoted mode_t.
+/// https://api.dart.dev/dart-ffi/VarArgs-class.html
+@AbiSpecificIntegerMapping({
+  Abi.macosArm64: Int32(),
+  Abi.macosX64: Int32(),
+  Abi.linuxArm: Uint32(),
+  Abi.linuxArm64: Uint32(),
+  Abi.linuxX64: Uint32(),
+  Abi.linuxIA32: Uint32(),
+})
+final class SemOpenMode extends AbiSpecificInteger {
+  const SemOpenMode();
 }
 
 class MODE_T_PERMISSIONS {
@@ -134,7 +136,7 @@ class MODE_T_PERMISSIONS {
 /// the resource available.
 @Native<
     Pointer<sem_t> Function(
-        Pointer<Char>, Int, VarArgs<(mode_t, UnsignedInt)>)>()
+        Pointer<Char>, Int, VarArgs<(SemOpenMode, UnsignedInt)>)>()
 external Pointer<sem_t> sem_open(
     Pointer<Char> name, int oflag, int mode, int value);
 
@@ -503,7 +505,8 @@ class UnixSemUnlinkMacros {
 }
 
 class UnixSemUnlinkError extends UnixSemError {
-  UnixSemUnlinkError(super.code, super.message, super.identifier, [super.critical = true]);
+  UnixSemUnlinkError(super.code, super.message, super.identifier,
+      [super.critical = true]);
 
   @override
   String toString() =>
@@ -542,7 +545,8 @@ class UnixSemUnlockWithPostMacros {
 }
 
 class UnixSemUnlockWithPostError extends UnixSemError {
-  UnixSemUnlockWithPostError(super.code, super.message, super.identifier, [super.critical = true]);
+  UnixSemUnlockWithPostError(super.code, super.message, super.identifier,
+      [super.critical = true]);
 
   @override
   String toString() =>

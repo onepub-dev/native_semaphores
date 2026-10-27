@@ -1,6 +1,5 @@
 import 'dart:ffi'
     show Int32, IntPtr, Native, Pointer, Struct, Uint16, Uint32, Uint8;
-import 'dart:math' show min;
 import 'package:ffi/ffi.dart' show Utf16;
 
 typedef HANDLE = IntPtr;
@@ -177,8 +176,8 @@ external int CloseHandle(int hObject);
 // final _GetLastError =
 //     DynamicLibrary.open('kernel32.dll').lookupFunction<Uint32 Function(), int Function()>('GetLastError');
 
-// @Native<Uint32 Function()>()
-// external int GetLastError();
+@Native<Uint32 Function()>()
+external int GetLastError();
 
 class WindowsCreateSemaphoreWMacros {
   static Pointer<Never> NULL = Pointer.fromAddress(0);
@@ -225,15 +224,14 @@ class WindowsCreateSemaphoreWMacros {
 
   static int INITIAL_VALUE_RECOMMENDED = 1;
 
-  static int MAXIMUM_VALUE_RECOMMENDED = 2;
+  static int MAXIMUM_VALUE_RECOMMENDED = 1;
 
   static String GLOBAL_NAME_PREFIX = 'Global\\';
 
   static String LOCAL_NAME_PREFIX = 'Local\\';
 
   // Maximum length of a path for a named semaphore, in some cases on windows 10 it can be up to 32,767
-  static int MAX_PATH =
-      260 - min(GLOBAL_NAME_PREFIX.length, LOCAL_NAME_PREFIX.length);
+  static int MAX_PATH = 260 - GLOBAL_NAME_PREFIX.length;
 }
 
 class WindowsCreateSemaphoreWError extends Error {
@@ -324,7 +322,7 @@ class WindowsWaitForSingleObjectMacros {
 class WindowsReleaseSemaphoreMacros {
   static const int RELEASE_COUNT_RECOMMENDED = 1;
 
-  static  Pointer<Never> PREVIOUS_RELEASE_COUNT_RECOMMENDED = NULL;
+  static Pointer<Never> PREVIOUS_RELEASE_COUNT_RECOMMENDED = NULL;
 
   static int ERROR_SEM_OVERFLOW = 105;
 
@@ -344,7 +342,6 @@ class WindowsReleaseSemaphoreError extends Error {
       'WindowsReleaseSemaphoreMacros: [Error: $identifier Code: $code]: $message';
 
   static WindowsReleaseSemaphoreError fromErrorCode(int code) {
-
     if (code == WindowsReleaseSemaphoreMacros.ERROR_SEM_OVERFLOW)
       return WindowsReleaseSemaphoreError(
           code,

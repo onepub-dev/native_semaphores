@@ -19,20 +19,27 @@ class SemaphoreIdentities<I extends SemaphoreIdentity> {
 
   Map<String, I> get all => Map.unmodifiable(_identities as Map<String, I>);
 
-  bool has<T>({required String name}) => _identities.containsKey(name) && _identities[name] is T;
+  bool has<T>({required String name}) =>
+      _identities.containsKey(name) && _identities[name] is T;
 
   // Returns the semaphore identity for the given identifier as a singleton
-  I get({required String name}) => _identities[name] as I? ?? (throw Exception('Failed to get semaphore identity for $name. It doesn\'t exist.'));
+  I get({required String name}) =>
+      _identities[name] as I? ??
+      (throw Exception(
+          'Failed to get semaphore identity for $name. It doesn\'t exist.'));
 
   I register({required String name, required I identity}) {
     (_identities.containsKey(name) || identity != _identities[name]) ||
-        (throw Exception('Failed to register semaphore identity for $name. It already exists or is not the same as the inbound identity being passed.'));
+        (throw Exception(
+            'Failed to register semaphore identity for $name. It already exists or is not the same as the inbound identity being passed.'));
 
     return _identities.putIfAbsent(name, () => identity) as I;
   }
 
   void delete({required String name}) {
-    _identities.containsKey(name) || (throw Exception('Failed to delete semaphore identity for $name. It doesn\'t exist.'));
+    _identities.containsKey(name) ||
+        (throw Exception(
+            'Failed to delete semaphore identity for $name. It doesn\'t exist.'));
     _identities.remove(name);
   }
 }
@@ -54,7 +61,8 @@ class SemaphoreIdentity {
 
   int get address => _address;
 
-  set address(int value) => !LatePropertyAssigned<int>(() => _address) ? _address = value : _address;
+  set address(int value) =>
+      !LatePropertyAssigned<int>(() => _address) ? _address = value : _address;
 
   late final String _name;
 
@@ -68,10 +76,33 @@ class SemaphoreIdentity {
   String get uuid => [name, isolate, process].join('_');
 
   SemaphoreIdentity({required String name}) {
-    name = name.replaceFirst('Global\\', '').replaceFirst('Local\\', '');
-    // check if identifier has invalid characters
-    if (name.contains(RegExp(r'[\\/:*?"<>|]'))) throw ArgumentError('Identifier contains invalid characters.');
+    validateName(name);
     _name = name;
+  }
+
+  /// Names are raw, unprefixed Unicode identifiers; no normalization is applied.
+  /// Reject invalid UTF-16 rather than aliasing it to U+FFFD during UTF-8 encoding.
+  static void validateName(String name) {
+    if (name.isEmpty || name.contains('\u0000')) {
+      throw ArgumentError('Identifier must be nonempty and contain no NUL.');
+    }
+    // check if identifier has invalid characters
+    if (name.contains(RegExp(r'[\\/:*?"<>|]')))
+      throw ArgumentError('Identifier contains invalid characters.');
+    for (var index = 0; index < name.length; index++) {
+      final unit = name.codeUnitAt(index);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        if (++index >= name.length ||
+            name.codeUnitAt(index) < 0xdc00 ||
+            name.codeUnitAt(index) > 0xdfff) {
+          throw ArgumentError(
+              'Identifier contains an unpaired UTF-16 surrogate.');
+        }
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+        throw ArgumentError(
+            'Identifier contains an unpaired UTF-16 surrogate.');
+      }
+    }
   }
 
   static SemaphoreIdentity instantiate<
@@ -81,13 +112,19 @@ class SemaphoreIdentity {
       IS extends SemaphoreIdentities<I>
       /* formatting guard comment */
       >({required String name}) {
-    if (!LatePropertyAssigned<IS>(() => __instances)) __instances = SemaphoreIdentities<I>();
+    validateName(name);
+    if (!LatePropertyAssigned<IS>(() => __instances))
+      __instances = SemaphoreIdentities<I>();
 
-    return (__instances as IS).has<I>(name: name) ? (__instances as IS).get(name: name) : (__instances as IS).register(name: name, identity: SemaphoreIdentity(name: name) as I);
+    return (__instances as IS).has<I>(name: name)
+        ? (__instances as IS).get(name: name)
+        : (__instances as IS)
+            .register(name: name, identity: SemaphoreIdentity(name: name) as I);
   }
 
   bool dispose() => throw UnimplementedError('Dispose not implemented');
 
   @override
-  String toString() => 'SemaphoreIdentity(name: $name, isolate: $isolate, process: $process)';
+  String toString() =>
+      'SemaphoreIdentity(name: $name, isolate: $isolate, process: $process)';
 }
