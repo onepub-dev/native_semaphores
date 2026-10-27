@@ -7,48 +7,43 @@ import 'semaphore_identity.dart';
 import 'ffi/unix.dart';
 
 /// Native operations are separate so failure paths can be tested safely.
-/// TODO: Capture result and errno together in a native wrapper. Reading errno
-/// after a Dart FFI transition is not guaranteed to preserve the native error;
-/// this affects open diagnostics, wait contention classification, and unlink.
-/// The current Dart-side reads are not a robust error-capture solution.
+/// Only native return values determine success. Dart FFI transitions can
+/// clobber errno, so failures have no errno diagnostics. Distinguishing failed
+/// nonblocking waits from contention requires a native error-capture wrapper.
 class UnixSemaphoreCalls {
   const UnixSemaphoreCalls();
   Pointer<sem_t> open(Pointer<Char> name) {
     final result = sem_open(name, UnixSemOpenMacros.O_CREAT,
         MODE_T_PERMISSIONS.RECOMMENDED, UnixSemOpenMacros.VALUE_RECOMMENDED);
     if (result.address == UnixSemOpenMacros.SEM_FAILED.address) {
-      final error = errno.value;
-      throw StateError('sem_open failed: errno $error');
+      throw StateError('sem_open failed');
     }
     return result;
   }
 
+  /// False means no acquisition, including any nonblocking native failure.
+  /// Callers may retry nonblocking waits until their own bounded deadline.
+  /// Blocking failures (including interruptions) throw without retrying.
   bool wait(Pointer<sem_t> handle, {required bool blocking}) {
     final result = blocking ? sem_wait(handle) : sem_trywait(handle);
     if (result == 0) return true;
-    final error = errno.value;
-    if (!blocking && error == UnixSemWaitOrTryWaitMacros.EAGAIN) return false;
-    // EINTR is reported distinctly from ordinary contention.
-    throw StateError('Semaphore wait failed: errno $error');
+    if (!blocking) return false;
+    throw StateError('sem_wait failed');
   }
 
   void post(Pointer<sem_t> handle) {
     if (sem_post(handle) == 0) return;
-    final error = errno.value;
-    throw StateError('sem_post failed: errno $error');
+    throw StateError('sem_post failed');
   }
 
   void close(Pointer<sem_t> handle) {
     if (sem_close(handle) == 0) return;
-    final error = errno.value;
-    throw StateError('sem_close failed: errno $error');
+    throw StateError('sem_close failed');
   }
 
   void unlink(Pointer<Char> name) {
     if (sem_unlink(name) == 0) return;
-    final error = errno.value;
-    if (error == UnixSemUnlinkMacros.ENOENT) return;
-    throw StateError('sem_unlink failed: errno $error');
+    throw StateError('sem_unlink failed');
   }
 }
 
@@ -140,6 +135,8 @@ class UnixSemaphore<
 
   /// Deletes the global name. Caller must first establish global quiescence.
   /// Close alone never unlinks, and no finalizer unlinks the shared name.
+  /// A native failure, including an already absent name, throws. Only this
+  /// instance's previously successful unlink is treated as idempotent success.
   @override
   bool unlink() {
     if (unlinked) return true;

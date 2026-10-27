@@ -18,6 +18,7 @@ class FakeState {
   bool contend = true;
   bool failOpen = false;
   bool failWait = false;
+  bool failNonblockingUnixWait = false;
   bool failPost = false;
   bool failClose = false;
   bool failUnlink = false;
@@ -26,8 +27,11 @@ class FakeState {
     if (failOpen) throw StateError('open failure');
   }
 
-  bool wait() {
+  bool wait({bool nonblockingUnix = false}) {
     waits++;
+    // Model the POSIX adapter's return-value-only contract: any nonzero
+    // sem_trywait result is false, even if the native cause was not contention.
+    if (nonblockingUnix && failNonblockingUnixWait) return false;
     if (failWait) throw StateError('wait failure');
     return !contend;
   }
@@ -54,15 +58,16 @@ class FakeUnix extends UnixSemaphoreCalls {
   }
 
   @override
-  bool wait(Pointer<sem_t> handle, {required bool blocking}) => state.wait();
+  bool wait(Pointer<sem_t> handle, {required bool blocking}) =>
+      state.wait(nonblockingUnix: !blocking);
   @override
   void post(Pointer<sem_t> handle) => state.post();
   @override
   void close(Pointer<sem_t> handle) => state.close();
   @override
   void unlink(Pointer<Char> name) {
-    if (state.failUnlink) throw StateError('unlink failure');
     state.unlinks++;
+    if (state.failUnlink) throw StateError('unlink failure');
   }
 }
 
@@ -175,7 +180,7 @@ void main() {
         expect(NativeSemaphore.instantiate(name: name), isNot(same(fresh)));
         expect(state.unlinks, 0);
       });
-      test('contention, native failure, recursion and guarded release', () {
+      test('contention, adapter exception, recursion and guarded release', () {
         final state = FakeState();
         final sem = fake(windows, state);
         expect(sem.unlock, throwsStateError);
@@ -315,7 +320,39 @@ void main() {
     expect(WindowsCreateSemaphoreWMacros.MAXIMUM_VALUE_RECOMMENDED, 1);
     if (Platform.isLinux) expect(UnixSemOpenMacros.SEM_FAILED.address, 0);
   });
-  test('unlink error is retryable without retaining name allocation', () {
+  test('Unix adapter nonblocking failure never acquires or releases', () {
+    final state = FakeState()
+      ..contend = false
+      ..failNonblockingUnixWait = true;
+    final sem = fake(false, state)..open();
+    for (var attempt = 0; attempt < 3; attempt++) {
+      expect(sem.lock(blocking: false), isFalse);
+      expect(sem.counter.counts.process.get(), 0);
+      expect(sem.counter.counts.isolate.get(), 0);
+      expect(sem.locked, isFalse);
+      expect(sem.unlock, throwsStateError);
+    }
+    expect(state.waits, 3);
+    expect(state.posts, 0);
+    // A blocking failure still throws and must not publish ownership.
+    state.failWait = true;
+    expect(sem.lock, throwsStateError);
+    expect(sem.locked, isFalse);
+    expect(sem.counter.counts.process.get(), 0);
+    state
+      ..failWait = false
+      ..failNonblockingUnixWait = false;
+    expect(sem.lock(blocking: false), isTrue);
+    expect(sem.counter.counts.process.get(), 1);
+    expect(sem.unlock(), isTrue);
+    expect(state.posts, 1);
+    expect(sem.close(), isTrue);
+    expect(sem.close(), isTrue);
+    expect(state.closes, 1);
+    expect(hasName(sem), isFalse);
+    expect(hasHandle(sem), isFalse);
+  });
+  test('Unix adapter unlink error is retryable without retaining allocation', () {
     final state = FakeState()..failUnlink = true;
     final sem = fake(false, state)
       ..open()
@@ -323,10 +360,20 @@ void main() {
     expect(sem.unlink, throwsStateError);
     expect(sem.unlinked, isFalse);
     expect(hasName(sem), isFalse);
+    expect(state.unlinks, 1);
+    // Repeated failures cannot be mistaken for a successful absent-name unlink.
+    expect(sem.unlink, throwsStateError);
+    expect(sem.unlinked, isFalse);
+    expect(hasName(sem), isFalse);
+    expect(state.unlinks, 2);
     state.failUnlink = false;
     expect(sem.unlink(), isTrue);
     expect(sem.unlink(), isTrue);
-    expect(state.unlinks, 1);
+    expect(state.unlinks, 3);
+    expect(hasName(sem), isFalse);
+    expect(hasHandle(sem), isFalse);
+    expect(sem.close(), isTrue);
+    expect(state.closes, 1);
   });
   test('native contention in bounded disposable subprocesses', () async {
     final name = freshName();

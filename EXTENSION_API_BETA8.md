@@ -6,8 +6,10 @@ is not a release or a claim that downstream `runtime_named_locks` is fixed.
 `lockAcrossProcesses` and `unlockAcrossProcesses` remain **stateful** protected
 operations on both platforms. A successful acquisition increments the process
 count once; successful release decrements it once. Public `lock`/`unlock` do
-not repeat those updates. Contention returns false without changing counters;
-native failures throw before ownership changes. An existing outer acquisition
+not repeat those updates. An unsuccessful nonblocking POSIX wait returns false
+without changing counters, whether caused by contention or a native failure.
+Blocking POSIX failures and Windows wait failures throw before ownership
+changes. An existing outer acquisition
 makes a direct cross-process acquisition return false without another wait.
 Public recursion and protected `lockReentrantToIsolate` /
 `unlockReentrantToIsolate` update only the recursion count. A direct outer
@@ -38,7 +40,9 @@ stale `@override` annotations; it cannot detect a same-named method declared
 without `@override`. All downstream subclasses must therefore audit these exact
 names before adopting beta8. Move native behavior to `UnixSemaphoreCalls` or
 `WindowsSemaphoreCalls`, passed through the constructor. Their wait methods
-return false only for contention and throw for other failures; post/close/unlink
+return false for no acquisition: on POSIX this includes every nonzero
+`sem_trywait` result, while Windows distinguishes timeout from failure using
+the returned wait status. Blocking wait failures throw. Post/close/unlink
 return normally only on success. State transitions belong to the semaphore,
 not the adapter. Lifecycle overrides must delegate to the platform `super`
 implementation so retirement is recorded. Custom counters must provide
@@ -64,17 +68,32 @@ this factory contract. Downstream factories must implement equivalent lifecycle
 and generation isolation themselves.
 
 The existing patch also changes `SemaphoreCount.all` to object-local storage,
-native failures to exceptions, and name-pointer getters to expose a pointer
-only during the native call. Do not retain a pointer obtained from those getters.
+reported native failures to exceptions (with the POSIX nonblocking limitation
+below), and name-pointer getters to expose a pointer only during the native
+call. Do not retain a pointer obtained from those getters.
 Close is terminal; unlink requires separately established global quiescence.
 
 ## Open native error-capture issue
 
-The Dart-side errno/GetLastError reads remain an unresolved portability issue:
-an FFI transition may clobber the error before Dart reads it. A future native
-wrapper must return operation result and captured error together. This affects
-Unix wait contention classification and unlink's ENOENT handling as well as
-open and other diagnostics; Windows wait classification uses returned WAIT_*
-statuses, but diagnostics still have this issue. No retry, errno preservation,
-or other Dart-side workaround is introduced here. Adapter tests do not establish
-reliable real-native error capture or cross-platform release readiness.
+The adapters no longer read errno/GetLastError after native calls. An FFI
+transition may clobber that state before Dart reads it; see
+[Dart SDK issue #38832](https://github.com/dart-lang/sdk/issues/38832).
+Only native return values determine success. POSIX `sem_wait` failure throws a
+generic error, including interruption, without retrying. Every nonzero
+`sem_trywait` result returns false and leaves ownership counters unchanged.
+Callers may retry nonblocking acquisition until their own bounded, monotonic
+deadline. Persistent native errors are therefore indistinguishable from
+contention and can appear as a caller's timeout. No retry loop or deadline is
+provided by this package.
+
+POSIX `sem_open`, `sem_post`, `sem_close`, and `sem_unlink` failures throw generic
+errors. In particular, an absent name is not accepted as successful unlink:
+every nonzero `sem_unlink` result throws and leaves the operation retryable.
+After this instance successfully unlinks, further local unlink calls still
+return true without another native call. Windows waits retain their returned
+`WAIT_*` status classification, but failure messages omit GetLastError.
+
+Precise native error classification and diagnostics require a C shim that
+captures the operation result and error together before returning to Dart.
+Adapter tests cover ownership and lifecycle behavior, not reliable real-native
+error capture or cross-platform release readiness.

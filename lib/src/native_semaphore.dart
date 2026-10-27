@@ -284,6 +284,10 @@ class NativeSemaphore<
   bool unlockAcrossProcesses() => throw UnimplementedError();
 
   /// Recursion is isolate-wide; this does not identify independent async tasks.
+  /// A false nonblocking result means no acquisition. On POSIX it can represent
+  /// either contention or a native failure; errno cannot be read reliably after
+  /// the FFI call. Callers implementing retries must enforce their own deadline.
+  /// Blocking native failures throw without changing ownership counters.
   bool lock({bool blocking = true}) {
     if (!opened) throw StateError('Cannot lock a semaphore that is not open.');
     if (counter.counts.process.get() > 0) {

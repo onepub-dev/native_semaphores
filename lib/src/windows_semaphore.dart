@@ -5,16 +5,15 @@ import 'semaphore_counter.dart';
 import 'semaphore_identity.dart';
 import 'ffi/windows.dart';
 
-/// TODO: Capture failing results and GetLastError together in a native wrapper.
-/// Dart FFI transitions may clobber the diagnostic error. Wait classification
-/// uses the returned WAIT_* status and does not depend on GetLastError.
+/// Uses native return values without GetLastError, which Dart FFI transitions
+/// may clobber. Accurate error diagnostics require a native wrapper.
+/// Wait classification uses the returned WAIT_* status.
 class WindowsSemaphoreCalls {
   const WindowsSemaphoreCalls();
   int open(LPCWSTR name) {
     final handle = CreateSemaphoreW(0, 1, 1, name);
     if (handle != 0) return handle;
-    final error = GetLastError();
-    throw StateError('CreateSemaphoreW failed: error $error');
+    throw StateError('CreateSemaphoreW failed');
   }
 
   bool wait(int handle, {required bool blocking}) {
@@ -22,24 +21,18 @@ class WindowsSemaphoreCalls {
         blocking ? WindowsWaitForSingleObjectMacros.TIMEOUT_RECOMMENDED : 0);
     if (result == WindowsWaitForSingleObjectMacros.WAIT_OBJECT_0) return true;
     if (result == WindowsWaitForSingleObjectMacros.WAIT_TIMEOUT) return false;
-    final error = result == WindowsWaitForSingleObjectMacros.WAIT_FAILED
-        ? GetLastError()
-        : null;
-    throw StateError(
-        'WaitForSingleObject failed: status $result, error $error');
+    throw StateError('WaitForSingleObject failed: status $result');
   }
 
   void post(int handle) {
     if (ReleaseSemaphore(handle, 1, WindowsReleaseSemaphoreMacros.NULL) != 0)
       return;
-    final error = GetLastError();
-    throw StateError('ReleaseSemaphore failed: error $error');
+    throw StateError('ReleaseSemaphore failed');
   }
 
   void close(int handle) {
     if (CloseHandle(handle) != 0) return;
-    final error = GetLastError();
-    throw StateError('CloseHandle failed: error $error');
+    throw StateError('CloseHandle failed');
   }
 }
 
