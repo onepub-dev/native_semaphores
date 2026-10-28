@@ -29,6 +29,12 @@ typedef sem_t = Int;
   Abi.linuxArm64: Uint32(),
   Abi.linuxX64: Uint32(),
   Abi.linuxIA32: Uint32(),
+  // Inert placeholders for loading the unconditionally exported Unix types.
+  // Unix native functions are not callable on Windows; these are not POSIX ABI
+  // declarations for Windows.
+  Abi.windowsIA32: Uint32(),
+  Abi.windowsX64: Uint32(),
+  Abi.windowsArm64: Uint32(),
 })
 final class mode_t extends AbiSpecificInteger {
   const mode_t();
@@ -45,6 +51,12 @@ final class mode_t extends AbiSpecificInteger {
   Abi.linuxArm64: Uint32(),
   Abi.linuxX64: Uint32(),
   Abi.linuxIA32: Uint32(),
+  // Inert placeholders for loading the unconditionally exported Unix types.
+  // Unix native functions are not callable on Windows; these are not POSIX ABI
+  // declarations for Windows.
+  Abi.windowsIA32: Uint32(),
+  Abi.windowsX64: Uint32(),
+  Abi.windowsArm64: Uint32(),
 })
 final class SemOpenMode extends AbiSpecificInteger {
   const SemOpenMode();

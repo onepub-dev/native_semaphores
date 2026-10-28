@@ -250,6 +250,13 @@ void main() {
     });
   }
   test('mode storage and promoted sem_open argument match the host ABI', () {
+    if (Platform.isWindows) {
+      // The public package exports these Unix types on Windows too. Verify
+      // their inert mappings load without invoking any Unix native functions.
+      expect(sizeOf<mode_t>(), 4);
+      expect(sizeOf<SemOpenMode>(), 4);
+      return;
+    }
     if (!Platform.isLinux && !Platform.isMacOS) return;
     expect(sizeOf<mode_t>(), Platform.isMacOS ? 2 : 4);
     expect(sizeOf<SemOpenMode>(), 4);

@@ -1,3 +1,36 @@
+## 1.0.0-beta.8
+
+- Release `runtime_native_semaphores` on OnePub with repository metadata
+  pointing to `onepub-dev/native_semaphores`. This package is distinct from
+  pub.dev's `native_semaphores` package.
+- Harden native handle and name-buffer lifetimes, validate names and injected
+  state before native use, and update ownership counters only after successful
+  native acquisition or release. Invalid lifecycle/ownership use throws or
+  refuses the transition; failed operations do not fabricate ownership.
+- Make successful close terminal for the same object, including close before
+  open. `NativeSemaphore.instantiate` after close creates a fresh local wrapper,
+  identity, and counter generation without unlinking the shared OS name.
+  Retired counters cannot mutate replacement counts; custom state injection is
+  rejected after a name's first retirement.
+- Require caller-established global quiescence before unlink. Close and
+  finalization do not unlink. Repeated close and a previously successful unlink
+  are locally idempotent. A POSIX unlink failure, including an absent name,
+  throws; Windows object deletion follows closure of all native handles.
+- Use native return values without post-FFI `errno`/`GetLastError` reads.
+  Nonblocking POSIX `false` means unacquired, whether due to contention or a
+  native failure; distinguishing them requires a C shim. Callers must bound
+  retries. Blocking POSIX failures, including interruptions, throw without
+  retrying. Windows distinguishes timeout from failure using returned wait
+  status. This does not claim reliable native error diagnostics or validation
+  on every platform.
+- **Breaking extension API:** remove the result-processing hooks listed in
+  [EXTENSION_API_BETA8.md](EXTENSION_API_BETA8.md), retain predicate veto hooks
+  and stateful protected acquisition/release operations, introduce native-call
+  adapters, and make count storage per object. Audit subclasses, lifecycle
+  overrides, custom counters, and retained native pointers before upgrading.
+- The separate `named_locks` / `runtime_named_locks` layer requires its own
+  update; upgrading this package alone does not resolve issues in that layer.
+
 ## 0.0.1
 - Initial release
 - See test/semaphore_test.dart for unified usage examples
