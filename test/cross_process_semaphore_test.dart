@@ -6,6 +6,8 @@ import 'package:runtime_native_semaphores/runtime_native_semaphores.dart';
 import 'package:safe_int_id/safe_int_id.dart';
 import 'package:test/test.dart';
 
+import 'support/cleanup.dart';
+
 class _Worker {
   final Process process;
   final StreamIterator<String> lines;
@@ -72,9 +74,11 @@ void main() {
 
   test('Processes contend on the same name until all handles close', () async {
     final name = '${safeIntId.getId()}_named_sem';
-    final sem = NativeSemaphore.instantiate(name: name)..open();
+    final sem = NativeSemaphore.instantiate(name: name);
+    expect(sem.open(), isTrue);
     final workers = <_Worker>[];
-    try {
+    var joined = false;
+    await withCleanup(() async {
       expect(sem.lock(blocking: false), isTrue);
       for (var i = 0; i < 2; i++) {
         final worker = _Worker(await Process.start(executable, [name]));
@@ -93,15 +97,72 @@ void main() {
       await workers.last.close();
       expect(sem.lock(blocking: false), isTrue);
       expect(sem.unlock(), isTrue);
-    } finally {
-      // On failures, terminate and join workers before removing the shared name.
-      await Future.wait(workers.map((worker) => worker.stop()));
-      if (sem.locked) {
-        expect(sem.unlock(), isTrue);
+    }, [
+      () async {
+        // On failures, terminate and join workers before removing the shared name.
+        await Future.wait(workers.map((worker) => worker.stop()));
+        joined = true;
+      },
+      () async {
+        if (sem.locked) {
+          expect(sem.unlock(), isTrue);
+        }
+        expect(sem.locked, isFalse);
+      },
+      () async {
+        expect(sem.close(), isTrue);
+      },
+      () async {
+        if (joined) expect(sem.unlink(), isTrue);
       }
-      expect(sem.locked, isFalse);
-      expect(sem.close(), isTrue);
-      expect(sem.unlink(), isTrue);
-    }
+    ]);
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('Retained retired state cannot bypass a replacement native wait',
+      () async {
+    final name = '${safeIntId.getId()}_named_sem';
+    final old = NativeSemaphore.instantiate(name: name);
+    expect(old.open(), isTrue);
+    final workers = <_Worker>[];
+    var joined = false;
+    NativeSemaphore current = old;
+    await withCleanup(() async {
+      final worker = _Worker(await Process.start(executable, [name]));
+      workers.add(worker);
+      await worker.expectLine('ready');
+      await worker.command('try', 'acquired');
+      expect(old.close(), isTrue);
+      NativeSemaphores().delete(name: name);
+      final replacement = NativeSemaphore.instantiate(name: name);
+      current = replacement;
+      expect(replacement.identity, isNot(same(old.identity)));
+      expect(replacement.counter, isNot(same(old.counter)));
+      old.counter.counts.process.increment();
+      old.counter.counts.isolate.increment();
+      expect(replacement.counter.counts.process.get(), 0);
+      expect(replacement.counter.counts.isolate.get(), 0);
+      expect(replacement.open(), isTrue);
+      expect(replacement.lock(blocking: false), isFalse);
+      expect(replacement.locked, isFalse);
+      await worker.command('release', 'released');
+      expect(replacement.lock(blocking: false), isTrue);
+      expect(replacement.unlock(), isTrue);
+      await worker.close();
+    }, [
+      () async {
+        await Future.wait(workers.map((worker) => worker.stop()));
+        joined = true;
+      },
+      () async {
+        if (current.locked) expect(current.unlock(), isTrue);
+        expect(current.locked, isFalse);
+      },
+      () async {
+        expect(current.close(), isTrue);
+      },
+      () async {
+        if (joined) expect(current.unlink(), isTrue);
+      }
+    ]);
   }, timeout: const Timeout(Duration(seconds: 90)));
 }

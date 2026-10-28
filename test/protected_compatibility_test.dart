@@ -396,6 +396,14 @@ void main() {
         throwsArgumentError);
     expect(() => NativeSemaphore.instantiate(name: name, identity: identity),
         throwsArgumentError);
+    final replacement = NativeSemaphore.instantiate(name: name);
+    expect(replacement.counter, isNot(same(third.counter)));
+    expect(replacement.identity, isNot(same(third.identity)));
+    third.counter.counts.process.increment();
+    expect(replacement.counter.counts.process.get(), 0);
+    expect(replacement.counter.counts.isolate.get(), 0);
+    expect(NativeSemaphore.instantiate(name: name), same(replacement));
+    expect(replacement.close(), isTrue);
   });
 
   test(

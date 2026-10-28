@@ -5,6 +5,8 @@ import 'package:ffi/ffi.dart';
 import 'package:runtime_native_semaphores/runtime_native_semaphores.dart';
 import 'package:test/test.dart';
 
+import 'support/cleanup.dart';
+
 int serial = 0;
 String freshName() =>
     'sec${pid}_${DateTime.now().microsecondsSinceEpoch % 1000000000}_${serial++}';
@@ -269,19 +271,21 @@ void main() {
     }
     if (Platform.isLinux) expect(UnixSemOpenMacros.SEM_FAILED.address, 0);
   });
-  test('native same name can be opened after close without unlinking', () {
+  test('native same name can be opened after close without unlinking',
+      () async {
     final name = freshName();
     NS? current;
     NS? previous;
-    try {
+    await withCleanup(() async {
       for (var generation = 0; generation < 3; generation++) {
         final sem = NativeSemaphore.instantiate(name: name);
         current = sem;
-        if (previous != null) {
-          expect(sem, isNot(same(previous)));
-          expect(sem.identity, isNot(same(previous.identity)));
-          expect(sem.counter, isNot(same(previous.counter)));
-          expect(previous.open, throwsStateError);
+        final prior = previous;
+        if (prior != null) {
+          expect(sem, isNot(same(prior)));
+          expect(sem.identity, isNot(same(prior.identity)));
+          expect(sem.counter, isNot(same(prior.counter)));
+          expect(prior.open, throwsStateError);
         }
         expect(sem.counter.counts.process.get(), 0);
         expect(sem.counter.counts.isolate.get(), 0);
@@ -299,15 +303,20 @@ void main() {
         expect(sem.unlinked, isFalse);
         previous = sem;
       }
-    } finally {
-      final sem = current;
-      if (sem != null) {
-        while (sem.locked) sem.unlock();
-        sem.close();
-        // This fresh test name has no other users; all handles are closed.
-        sem.unlink();
+    }, [
+      () async {
+        final sem = current;
+        if (sem != null) {
+          for (var releases = 0; releases < 2 && sem.locked; releases++) {
+            expect(sem.unlock(), isTrue);
+          }
+          expect(sem.locked, isFalse);
+          expect(sem.close(), isTrue);
+          // This fresh test name has no other users; all handles are closed.
+          expect(sem.unlink(), isTrue);
+        }
       }
-    }
+    ]);
   });
   test('name validation and binary maximum', () {
     for (final name in ['', 'a\u0000b']) {
@@ -359,7 +368,8 @@ void main() {
     expect(hasName(sem), isFalse);
     expect(hasHandle(sem), isFalse);
   });
-  test('Unix adapter unlink error is retryable without retaining allocation', () {
+  test('Unix adapter unlink error is retryable without retaining allocation',
+      () {
     final state = FakeState()..failUnlink = true;
     final sem = fake(false, state)
       ..open()

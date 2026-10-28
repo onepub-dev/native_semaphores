@@ -3,16 +3,18 @@ import 'package:safe_int_id/safe_int_id.dart';
 import 'package:test/test.dart';
 
 import 'support/semaphore_workers.dart';
+import 'support/cleanup.dart';
 
 void main() {
   group('Reentrant semaphore lifecycle', () {
     for (final depth in [1, 4]) {
-      test('Depth $depth closes terminally and yields a fresh wrapper', () {
+      test('Depth $depth closes terminally and yields a fresh wrapper',
+          () async {
         final name = '${safeIntId.getId()}_named_sem';
         final sem = NativeSemaphore.instantiate(name: name);
         expect(sem.opened, isFalse);
         expect(sem.open(), isTrue);
-        try {
+        await withCleanup(() async {
           for (var level = 0; level < depth; level++) {
             expect(NativeSemaphore.instantiate(name: name), same(sem));
             expect(sem.open(), isTrue);
@@ -40,25 +42,37 @@ void main() {
           expect(replacement.closed, isFalse);
           expect(replacement.unlinked, isFalse);
           expect(replacement.open(), isTrue);
-          try {
+          await withCleanup(() async {
             expect(replacement.lock(blocking: false), isTrue);
             expect(replacement.unlock(), isTrue);
-          } finally {
-            if (replacement.locked) {
-              expect(replacement.unlock(), isTrue);
+          }, [
+            () async {
+              if (replacement.locked) {
+                expect(replacement.unlock(), isTrue);
+              }
+              expect(replacement.locked, isFalse);
+            },
+            () async {
+              expect(replacement.close(), isTrue);
+            },
+            () async {
+              expect(replacement.unlink(), isTrue);
             }
-            expect(replacement.locked, isFalse);
-            replacement.close();
-            replacement.unlink();
+          ]);
+        }, [
+          () async {
+            for (var releases = 0; releases < depth && sem.locked; releases++) {
+              expect(sem.unlock(), isTrue);
+            }
+            expect(sem.locked, isFalse);
+          },
+          () async {
+            expect(sem.close(), isTrue);
+          },
+          () async {
+            expect(sem.unlink(), isTrue);
           }
-        } finally {
-          for (var releases = 0; releases < depth && sem.locked; releases++) {
-            expect(sem.unlock(), isTrue);
-          }
-          expect(sem.locked, isFalse);
-          sem.close();
-          sem.unlink();
-        }
+        ]);
       });
     }
 

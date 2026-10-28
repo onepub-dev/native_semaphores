@@ -82,6 +82,40 @@ The `runtime_named_locks` 1.0.0-beta.7 multi-isolate test unlinks during use
 and is incompatible with this lifecycle contract; upgrading its dependency
 alone does not fix it.
 
+## Recover existing native semaphore state before upgrading
+
+Before trusting mutual exclusion with 2.0.0, migrate any names previously used
+by beta.7. An unmatched beta.7 `unlock()` could leave more than one native
+permit, allowing concurrent owners after an upgrade. An abandoned zero count
+can instead leave future callers unable to acquire. Closing handles or opening
+the same name with 2.0.0 does not repair either condition: POSIX opens of an
+existing name ignore the requested initial count, and named semaphores can
+persist after all handles close. See [sem_open](https://man7.org/linux/man-pages/man3/sem_open.3.html)
+and [named semaphore persistence](https://man7.org/linux/man-pages/man7/sem_overview.7.html).
+
+Use a coordinated migration across **all processes and isolates**:
+
+1. Stop old participants and establish global quiescence: no participant may
+   hold, wait on, or open an affected name during migration. Close their handles.
+2. Unlink the affected POSIX names and recreate them with the intended initial
+   count, or move every participant to fresh names. Never unlink while old
+   users are active: old handles and a recreated name can refer to different
+   native objects and defeat exclusion.
+3. Restart all participants using the migrated names and compatible code only
+   after this coordinated reset or name change is complete.
+
+On Windows, existing handles can keep the old semaphore object and its
+parameters alive; opening that name ignores the new initial and maximum
+counts. Ensure all old handles are closed before recreation, or coordinate a
+move to fresh names. See [CreateSemaphoreW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createsemaphorew).
+
+Version 2.0.0 does not automatically detect or repair inherited native counts.
+Fresh Dart wrappers, identities, and counters isolate local generations; they
+do not reset shared native state. This guidance applies to the private OnePub
+`runtime_native_semaphores` migration and does not claim a fix or release for
+the public `native_semaphores` package or the separate `runtime_named_locks`
+layer.
+
 ## Open native error-capture issue
 
 The adapters no longer read errno/GetLastError after native calls. An FFI

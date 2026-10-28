@@ -125,7 +125,21 @@ class NativeSemaphore<
   @protected
   void markClosed() {
     _retiredNames.add(name);
+    _retireCachedState();
     hasClosed = true;
+  }
+
+  void _retireCachedState() {
+    final counters = SemaphoreCounters<I, CU, CD, CT, CTS, CTR>();
+    if (counters.has<CTR>(identifier: name) &&
+        identical(counters.get(identifier: name), counter)) {
+      counters.delete(identifier: name);
+    }
+    final identities = SemaphoreIdentities<I>();
+    if (identities.has<I>(name: name) &&
+        identical(identities.get(name: name), identity)) {
+      identities.delete(name: name);
+    }
   }
 
   bool hasUnlinked = false;
@@ -207,16 +221,7 @@ class NativeSemaphore<
         throw ArgumentError(
             'Custom state cannot be injected after retirement.');
       }
-      final counters = SemaphoreCounters<I, CU, CD, CT, CTS, CTR>();
-      if (counters.has<CTR>(identifier: name) &&
-          identical(counters.get(identifier: name), previous.counter)) {
-        counters.delete(identifier: name);
-      }
-      final identities = SemaphoreIdentities<I>();
-      if (identities.has<I>(name: name) &&
-          identical(identities.get(name: name), previous.identity)) {
-        identities.delete(name: name);
-      }
+      previous._retireCachedState();
       instances.delete(name: name);
       // Only isolate-local registries change: the shared OS name remains.
     }
