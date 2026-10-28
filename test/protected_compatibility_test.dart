@@ -11,6 +11,41 @@ abstract interface class ProtectedAccess {
   bool unwind();
 }
 
+// Downstream subclasses can shadow these fields and initialize them only after
+// super returns. The base constructor must not invoke their implicit getters.
+mixin DeferredFields on NS {
+  @override
+  // Deliberate field shadowing reproduces downstream constructor ordering.
+  // ignore: overridden_fields
+  late final String name;
+  @override
+  // ignore: overridden_fields
+  late final CTR counter;
+}
+
+class DeferredUnixSemaphore
+    extends UnixSemaphore<I, IS, CU, CD, CT, CTS, CTR, CTRS>
+    with DeferredFields {
+  DeferredUnixSemaphore(String name, CTR counter, fixtures.FakeState state,
+      {String? exposedName, CTR? exposedCounter})
+      : super(name: name, counter: counter, calls: fixtures.FakeUnix(state)) {
+    this.name = exposedName ?? name;
+    this.counter = exposedCounter ?? counter;
+  }
+}
+
+class DeferredWindowsSemaphore
+    extends WindowsSemaphore<I, IS, CU, CD, CT, CTS, CTR, CTRS>
+    with DeferredFields {
+  DeferredWindowsSemaphore(String name, CTR counter, fixtures.FakeState state,
+      {String? exposedName, CTR? exposedCounter})
+      : super(
+            name: name, counter: counter, calls: fixtures.FakeWindows(state)) {
+    this.name = exposedName ?? name;
+    this.counter = exposedCounter ?? counter;
+  }
+}
+
 mixin HookVeto on NS {
   bool allowOpen = true;
   bool allowAcquire = true;
@@ -75,8 +110,71 @@ class WindowsSubclass
 
 void main() {
   for (final windows in [false, true]) {
+    NS deferred(String name, CTR counter, fixtures.FakeState state,
+            {String? exposedName, CTR? exposedCounter}) =>
+        windows
+            ? DeferredWindowsSemaphore(name, counter, state,
+                exposedName: exposedName, exposedCounter: exposedCounter)
+            : DeferredUnixSemaphore(name, counter, state,
+                exposedName: exposedName, exposedCounter: exposedCounter);
+
     group(windows ? 'Windows protected adapters' : 'Unix protected adapters',
         () {
+      test('constructor validates arguments before deferred subclass fields',
+          () {
+        final name = fixtures.freshName();
+        final counter = fixtures.makeCounter(name);
+        final state = fixtures.FakeState()..contend = false;
+        final sem = deferred(name, counter, state);
+        expect(sem.name, name);
+        expect(sem.counter, same(counter));
+        expect(sem.identity, same(counter.identity));
+        expect(sem.open(), isTrue);
+        expect(sem.lock(blocking: false), isTrue);
+        expect(counter.counts.process.get(), 1);
+        expect(sem.unlock(), isTrue);
+        expect(sem.close(), isTrue);
+
+        final rejected = fixtures.FakeState();
+        expect(() => deferred('', counter, rejected), throwsArgumentError);
+        expect(() => deferred(fixtures.freshName(), counter, rejected),
+            throwsArgumentError);
+        expect(rejected.opens, 0);
+      });
+
+      test('post-construction access still dispatches to subclass fields', () {
+        final argumentName = fixtures.freshName();
+        final argumentCounter = fixtures.makeCounter(argumentName);
+        final exposedName = fixtures.freshName();
+        final exposedCounter = fixtures.makeCounter(exposedName);
+        final state = fixtures.FakeState()..contend = false;
+        final sem = deferred(argumentName, argumentCounter, state,
+            exposedName: exposedName, exposedCounter: exposedCounter);
+        expect(sem.name, exposedName);
+        expect(sem.counter, same(exposedCounter));
+        expect(sem.identity, same(exposedCounter.identity));
+        expect(sem.open(), isTrue);
+        expect(sem.lock(blocking: false), isTrue);
+        expect(exposedCounter.counts.process.get(), 1);
+        expect(argumentCounter.counts.process.get(), 0);
+        expect(sem.unlock(), isTrue);
+        expect(sem.close(), isTrue);
+      });
+
+      test('open revalidates shadowed name and counter before native calls',
+          () {
+        final name = fixtures.freshName();
+        final counter = fixtures.makeCounter(name);
+        for (final exposedName in ['', fixtures.freshName()]) {
+          final state = fixtures.FakeState();
+          final sem = deferred(name, counter, state, exposedName: exposedName);
+          expect(sem.open, throwsArgumentError);
+          expect(state.opens, 0);
+          expect(sem.opened, isFalse);
+          sem.close();
+        }
+      });
+
       late fixtures.FakeState state;
       late NS sem;
       late ProtectedAccess direct;

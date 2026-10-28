@@ -1,12 +1,19 @@
-## 1.0.0-beta.8
+## 2.0.0
 
 - Release `runtime_native_semaphores` on OnePub with repository metadata
   pointing to `onepub-dev/native_semaphores`. This package is distinct from
   pub.dev's `native_semaphores` package.
+- Use a major version for the breaking extension API and unlink semantics,
+  keeping this release outside the `^1.0.0-beta.7` dependency range used by
+  `runtime_named_locks` 1.0.0-beta.7.
 - Harden native handle and name-buffer lifetimes, validate names and injected
   state before native use, and update ownership counters only after successful
   native acquisition or release. Invalid lifecycle/ownership use throws or
   refuses the transition; failed operations do not fabricate ownership.
+- Count the added leading slash against the Unix 30-byte UTF-8 name limit:
+  raw names are limited to 29 UTF-8 bytes, not 30 characters.
+- Validate constructor arguments without invoking subclass `name` or `counter`
+  getters before subclass initialization, preserving late-initialized overrides.
 - Make successful close terminal for the same object, including close before
   open. `NativeSemaphore.instantiate` after close creates a fresh local wrapper,
   identity, and counter generation without unlinking the shared OS name.
@@ -24,7 +31,7 @@
   status. This does not claim reliable native error diagnostics or validation
   on every platform.
 - **Breaking extension API:** remove the result-processing hooks listed in
-  [EXTENSION_API_BETA8.md](EXTENSION_API_BETA8.md), retain predicate veto hooks
+  [migration guide](MIGRATION_2.0.0.md), retain predicate veto hooks
   and stateful protected acquisition/release operations, introduce native-call
   adapters, and make count storage per object. Audit subclasses, lifecycle
   overrides, custom counters, and retained native pointers before upgrading.

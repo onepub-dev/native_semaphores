@@ -5,9 +5,14 @@ for cooperating processes and isolates on Linux, macOS, and Windows. Originally
 developed by [Pieces for Developers](https://pieces.app), this package
 is maintained at [onepub-dev/native_semaphores](https://github.com/onepub-dev/native_semaphores).
 
-This release is **`runtime_native_semaphores` 1.0.0-beta.8**, hosted on OnePub.
+This release is **`runtime_native_semaphores` 2.0.0**, hosted on OnePub.
 It is distinct from the public pub.dev package named `native_semaphores`.
 These release notes do not claim that the public package has been updated.
+
+Version 2.0.0 breaks the 1.0.0-beta.7 extension contract and changes unlink
+semantics. The major version keeps it outside the `^1.0.0-beta.7` dependency
+range used by `runtime_named_locks` 1.0.0-beta.7. That separate package requires
+its own migration and fix before adopting this release.
 
 ## Installation
 
@@ -17,7 +22,7 @@ With access to the private OnePub repository, use:
 dependencies:
   runtime_native_semaphores:
     hosted: https://onepub.dev/api/jbbxpsdavu/
-    version: 1.0.0-beta.8
+    version: 2.0.0
 ```
 
 ## Usage and ownership
@@ -48,7 +53,7 @@ tasks in that isolate. Use separate task-level synchronization where needed.
 The `locked` and `reentrant` properties report local counters, not global
 ownership or quiescence.
 
-## Lifecycle and beta.8 migration
+## Lifecycle and 2.0.0 migration
 
 - `open()` on an already open object succeeds without another native open.
   A failed open can be retried before close. Locking requires an open object;
@@ -77,7 +82,9 @@ ownership or quiescence.
 Names must be nonempty, unprefixed identifiers. NUL, reserved punctuation,
 `Global\`/`Local\` input prefixes, and unpaired UTF-16 surrogates are rejected.
 Valid surrogate pairs are accepted without Unicode normalization. Platform
-length limits are checked before native open. Injected state must match the
+length limits are checked before native open. On Unix, the package's 30-byte
+UTF-8 limit includes the added leading slash, so the raw name can contain at
+most **29 UTF-8 bytes** (not 29 Unicode characters). Injected state must match the
 name; an injected counter and identity must reference the same identity.
 
 ## Native failures and nonblocking waits
@@ -102,9 +109,9 @@ successful native validation on every supported platform.
 
 ## Subclass compatibility
 
-Beta.8 deliberately breaks part of the beta.7 extension API. The seven
+Version 2.0.0 deliberately breaks part of the 1.0.0-beta.7 extension API. The seven
 result-processing hooks listed in the
-[extension migration guide](EXTENSION_API_BETA8.md) are removed. Audit subclass
+[extension migration guide](MIGRATION_2.0.0.md) are removed. Audit subclass
 methods even if they lack `@override`, because those stale methods may compile
 without being called. Move native operations into `UnixSemaphoreCalls` or
 `WindowsSemaphoreCalls` constructor adapters.
@@ -121,7 +128,7 @@ implementation so retirement is recorded.
 `SemaphoreCount.all` now exposes per-object storage. Custom counters must use
 generation-local storage rather than shared static maps. Native name-pointer
 getters expose a pointer only during the native call; do not retain it. See the
-[full migration guide](EXTENSION_API_BETA8.md) before updating subclasses.
+[full migration guide](MIGRATION_2.0.0.md) before updating subclasses.
 
 ## Security scope
 

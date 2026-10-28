@@ -1,43 +1,35 @@
-import 'dart:io' show exit, pid, stdout;
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:runtime_native_semaphores/runtime_native_semaphores.dart';
 
-void main(List<String> args) async {
-  String name = args.elementAt(0);
-
-  int lock_delay = int.parse(args.elementAt(1));
-  int unlock_delay = int.parse(args.elementAt(2));
-
-  String tracker = args.elementAt(3);
-
-  stdout.writeln('Child Process Parameters Lock Delay: $lock_delay, Unlock Delay: $unlock_delay, Tracker: $tracker, PID: $pid, Name: $name');
-
-  stdout.writeln('Creating semaphore with name: $name');
-
-  final NativeSemaphore sem = NativeSemaphore.instantiate(name: name)..open();
-
-  await Future.delayed(Duration(seconds: lock_delay), () {}) ;
-
-  Stopwatch stopwatch = Stopwatch()..start();
-  sem.lock();
-  stopwatch.stop();
-
-  stdout.writeln('Child Process $tracker $pid Locking semaphore with name $name took: [${stopwatch.elapsed.inSeconds}] seconds');
-
-  await Future.delayed(Duration(seconds: unlock_delay), () {});
-
-  sem.unlock();
-
-  stdout.writeln('Semaphore unlocked with name: $name');
-
-  sem.close();
-
-  stdout.writeln('Semaphore closed with name: $name');
-
-  sem.unlink();
-
-  stdout.writeln('Semaphore unlinked with name: $name');
-
-  exit(0);
-
+// A line protocol lets the parent prove contention without timing assumptions.
+Future<void> main(List<String> args) async {
+  final sem = NativeSemaphore.instantiate(name: args.single)..open();
+  stdout.writeln('ready');
+  try {
+    await for (final command in stdin
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(const Duration(seconds: 10))) {
+      switch (command) {
+        case 'try':
+          stdout.writeln(sem.lock(blocking: false) ? 'acquired' : 'contended');
+        case 'release':
+          sem.unlock();
+          stdout.writeln('released');
+        case 'close':
+          return;
+        default:
+          throw ArgumentError('Unknown command: $command');
+      }
+    }
+  } finally {
+    if (sem.locked && !sem.unlock()) {
+      throw StateError('Child failed to release its acquisition');
+    }
+    if (sem.locked) throw StateError('Child retained ownership after release');
+    sem.close();
+    // Only the parent unlinks, after every child has exited.
+  }
 }

@@ -146,9 +146,11 @@ class NativeSemaphore<
   bool get reentrant => counter.counts.isolate.get() > 0;
 
   NativeSemaphore(
-      {required String this.name,
-      required CTR this.counter,
-      this.verbose = false}) {
+      {required String name, required CTR counter, this.verbose = false})
+      : name = name,
+        counter = counter {
+    // Validate constructor arguments, not virtual getters: subclass fields may
+    // only be initialized after this super constructor returns.
     SemaphoreIdentity.validateName(name);
     if (counter.identity.name != name) {
       throw ArgumentError('Counter identity must match the semaphore name.');

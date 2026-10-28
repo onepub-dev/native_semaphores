@@ -1,99 +1,107 @@
-import 'dart:async' show Future;
-import 'dart:io' show File, Platform, Process, ProcessResult;
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
-import 'package:runtime_native_semaphores/runtime_native_semaphores.dart'
-    show NativeSemaphore;
-import 'package:safe_int_id/safe_int_id.dart' show safeIntId;
-import 'package:test/expect.dart';
-import 'package:test/test.dart'
-    show  equals,  expect, group, isTrue, setUp, test;
+import 'package:runtime_native_semaphores/runtime_native_semaphores.dart';
+import 'package:safe_int_id/safe_int_id.dart';
+import 'package:test/test.dart';
 
-String processRequest(Map<String, dynamic> request) {
-  // Implement your logic here
-  return 'Processed from parent: ${request['data']}';
+class _Worker {
+  final Process process;
+  final StreamIterator<String> lines;
+  final Future<String> errors;
+
+  _Worker(this.process)
+      : lines = StreamIterator(process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())),
+        errors = process.stderr.transform(utf8.decoder).join();
+
+  Future<void> expectLine(String expected) async {
+    expect(await lines.moveNext().timeout(const Duration(seconds: 10)), isTrue);
+    expect(lines.current, expected);
+  }
+
+  Future<void> command(String command, String expected) async {
+    process.stdin.writeln(command);
+    await process.stdin.flush();
+    await expectLine(expected);
+  }
+
+  Future<void> close() async {
+    process.stdin.writeln('close');
+    await process.stdin.close();
+    expect(await process.exitCode.timeout(const Duration(seconds: 10)), 0,
+        reason: await errors);
+  }
+
+  Future<void> stop() async {
+    process.kill();
+    await process.exitCode.timeout(const Duration(seconds: 10));
+    await lines.cancel();
+  }
 }
 
-void main() async {
-  String process_name =
-      'bin${Platform.pathSeparator}test${Platform.pathSeparator}primary_semaphore${Platform.isWindows ? '.exe' : ''}';
+void main() {
+  late Directory temporary;
+  late String executable;
 
-  setUp(() async {
-    File primary_semaphore_executable = File(process_name);
-
-    if (!primary_semaphore_executable.existsSync()) {
-      ProcessResult compiling_primary_semaphore_executable =
-          Process.runSync('dart', [
-        'compile',
-        'exe',
-        'bin${Platform.pathSeparator}test${Platform.pathSeparator}primary_semaphore.dart',
-        '-o',
-        process_name
-      ]);
-
-      print(
-          'Successfully compiled primary_semaphore_executable: ${compiling_primary_semaphore_executable.stdout}');
-
-      primary_semaphore_executable.existsSync() ||
-          (throw Exception("Primary semaphore executable should exist."));
-    } else {
-      print(
-          'Primary semaphore was found and already compiled. Be sure you haven\'t made changes and need to compile again.');
+  setUpAll(() async {
+    temporary = await Directory.systemTemp.createTemp('semaphore_test_');
+    addTearDown(() => temporary.delete(recursive: true));
+    executable = '${temporary.path}/primary${Platform.isWindows ? '.exe' : ''}';
+    // Compile the current source every run; never reuse an old checked-out binary.
+    final compiler = await Process.start(Platform.resolvedExecutable, [
+      'compile',
+      'exe',
+      'bin/test/primary_semaphore.dart',
+      '-o',
+      executable
+    ]);
+    final output = compiler.stdout.transform(utf8.decoder).join();
+    final errors = compiler.stderr.transform(utf8.decoder).join();
+    try {
+      final exitCode =
+          await compiler.exitCode.timeout(const Duration(seconds: 20));
+      expect(exitCode, 0, reason: '${await output}\n${await errors}');
+    } finally {
+      compiler.kill();
+      await compiler.exitCode.timeout(const Duration(seconds: 5));
     }
   });
 
-  group('Testing Cross-Process Named Semaphore', () {
-    test('Several Processes Coordinated Leveraging Named Locks', () async {
-      String name = '${safeIntId.getId()}_named_sem';
-
-      final NativeSemaphore sem = NativeSemaphore.instantiate(name: name)
-        ..open()
-        ..lock();
-
-      Future.delayed(Duration(seconds: 4), () => sem.unlock());
-
-      // It takes about 1 second rounded up to spin up each process here i.e. the first lock should take about 3 seconds to acquire given the delay above
-      // The second process should take about 5 seconds to acquire the lock given the unlock delay of 4 seconds of the first process and the roughly 1 second it takes to spin up the first process
-      List<ProcessResult> processes = await Future.wait([
-        // Initial process with lock delay of 0 locks right away
-        Process.run(process_name,
-            [name, /*lock delay */ '0', /* unlock delay */ '4', 'first']),
-        // Secondary process with lock delay of 2 i.e. 2 seconds into the first processes unlock delay
-        Process.run(process_name,
-            [name, /*lock delay */ '2', /* unlock delay */ '0', 'second'])
-      ]);
-
-      // Start with unlock delay of 2
-      ProcessResult running_primary_semaphore_executable = processes.first;
-      // Start with unlock delay of 4
-      ProcessResult running_secondary_semaphore_executable = processes.last;
-
-      print(
-          '${Platform.lineTerminator}Primary Process:${Platform.lineTerminator}${Platform.lineTerminator} ${running_primary_semaphore_executable.stdout} ${Platform.lineTerminator}');
-      print(
-          '${Platform.lineTerminator}Secondary Process:${Platform.lineTerminator}${Platform.lineTerminator} ${running_secondary_semaphore_executable.stdout} ${Platform.lineTerminator}${Platform.lineTerminator}');
-
-      // use regex to parse the number [x] out of this return string "Child Process first 55852 Locking semaphore with name 44314234863597_named_sem took: [3] seconds"
-      RegExp lock_time = RegExp(
-          r"Locking semaphore with name \d+_named_sem took: \[(\d+)\] seconds");
-
-      int? primary_lock_time = int.tryParse(lock_time
-              .firstMatch(running_primary_semaphore_executable.stdout as String)
-              ?.group(1) ??
-          '-1');
-      int? secondary_lock_time = int.tryParse(lock_time
-              .firstMatch(
-                  running_secondary_semaphore_executable.stdout as String)
-              ?.group(1) ??
-          '-1');
-
-      print('primary_lock_time: $primary_lock_time seconds to lock');
-      print('secondary_lock_time: $secondary_lock_time seconds to lock');
-
-      expect(primary_lock_time, equals(anyOf([3, 4])));
-      expect(secondary_lock_time, equals(anyOf([4, 5, 6])));
-
+  test('Processes contend on the same name until all handles close', () async {
+    final name = '${safeIntId.getId()}_named_sem';
+    final sem = NativeSemaphore.instantiate(name: name)..open();
+    final workers = <_Worker>[];
+    try {
+      expect(sem.lock(blocking: false), isTrue);
+      for (var i = 0; i < 2; i++) {
+        final worker = _Worker(await Process.start(executable, [name]));
+        workers.add(worker);
+        await worker.expectLine('ready');
+        await worker.command('try', 'contended');
+      }
+      expect(sem.unlock(), isTrue);
+      await workers.first.command('try', 'acquired');
+      await workers.last.command('try', 'contended');
+      await workers.first.command('release', 'released');
+      await workers.first.close();
+      await workers.last.command('try', 'acquired');
+      expect(sem.lock(blocking: false), isFalse);
+      await workers.last.command('release', 'released');
+      await workers.last.close();
+      expect(sem.lock(blocking: false), isTrue);
+      expect(sem.unlock(), isTrue);
+    } finally {
+      // On failures, terminate and join workers before removing the shared name.
+      await Future.wait(workers.map((worker) => worker.stop()));
+      if (sem.locked) {
+        expect(sem.unlock(), isTrue);
+      }
+      expect(sem.locked, isFalse);
       expect(sem.close(), isTrue);
       expect(sem.unlink(), isTrue);
-    });
-  });
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

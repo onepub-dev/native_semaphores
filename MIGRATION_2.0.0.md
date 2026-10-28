@@ -1,7 +1,11 @@
-# Planned beta8 extension API migration
+# runtime_native_semaphores 2.0.0 migration
 
-This hardening patch intentionally breaks part of the beta7 subclass API. It
-is not a release or a claim that downstream `runtime_named_locks` is fixed.
+`runtime_native_semaphores` 2.0.0 on OnePub intentionally breaks part of the
+1.0.0-beta.7 subclass API and changes unlink semantics. It is distinct from
+the public pub.dev package `native_semaphores`. The major version keeps this
+release outside the `^1.0.0-beta.7` dependency range used by the separate
+`runtime_named_locks` 1.0.0-beta.7 package, which requires its own migration
+and fix before adopting 2.0.0.
 
 `lockAcrossProcesses` and `unlockAcrossProcesses` remain **stateful** protected
 operations on both platforms. A successful acquisition increments the process
@@ -38,7 +42,7 @@ as methods that are silently bypassed or inherit `UnimplementedError`:
 Direct `super` calls to removed hooks no longer compile. The analyzer diagnoses
 stale `@override` annotations; it cannot detect a same-named method declared
 without `@override`. All downstream subclasses must therefore audit these exact
-names before adopting beta8. Move native behavior to `UnixSemaphoreCalls` or
+names before adopting 2.0.0. Move native behavior to `UnixSemaphoreCalls` or
 `WindowsSemaphoreCalls`, passed through the constructor. Their wait methods
 return false for no acquisition: on POSIX this includes every nonzero
 `sem_trywait` result, while Windows distinguishes timeout from failure using
@@ -67,11 +71,16 @@ constructing wrappers around reused state is not a supported way to bypass
 this factory contract. Downstream factories must implement equivalent lifecycle
 and generation isolation themselves.
 
-The existing patch also changes `SemaphoreCount.all` to object-local storage,
+Version 2.0.0 also changes `SemaphoreCount.all` to object-local storage,
 reported native failures to exceptions (with the POSIX nonblocking limitation
 below), and name-pointer getters to expose a pointer only during the native
 call. Do not retain a pointer obtained from those getters.
-Close is terminal; unlink requires separately established global quiescence.
+Close is terminal; unlink requires close and separately established global
+quiescence. Coordinate all processes and isolates so that none still uses,
+waits on, or opens the name during removal. Do not unlink during active use.
+The `runtime_named_locks` 1.0.0-beta.7 multi-isolate test unlinks during use
+and is incompatible with this lifecycle contract; upgrading its dependency
+alone does not fix it.
 
 ## Open native error-capture issue
 
